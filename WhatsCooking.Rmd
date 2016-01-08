@@ -1,0 +1,184 @@
+---
+title: 'Whats Cooking: Capstone Project'
+author: "Mallesh"
+date: "January 5, 2016"
+output: pdf_document
+---
+
+Introduction
+--------------------------------
+
+This project has been picked from one of the Kaggle competitions. Even though this might not address a real problem (or may be it does?), it has a lot of scope for learning and similar principles can be applied to several other classification problems. 
+The primary objective of the project is to predict the type of cuisine based on the list of ingredients used in the dish. A classification model will be developed based on a training dataset and then be used to predict the cuisines in a test dataset. 
+
+Datasets can be found here:
+
+https://www.kaggle.com/c/whats-cooking/data
+
+Download both train.json and test.json into the working directory.
+
+```{r warning=FALSE, message=FALSE}
+
+require(jsonlite)
+
+cookTrain <- fromJSON("train.json", flatten = TRUE)
+cookTest <- fromJSON("test.json", flatten = TRUE)
+
+```
+
+Lets look at the structure of the data.
+```{r warning=FALSE, message=FALSE}
+
+str(cookTrain)
+```
+
+Looking at the structure of the file, we know that there are three attributes, id - indicates a dish ID (from kaggle), cusine - indicates a type of cuisine and ingredients - a list of ingredients. 
+
+Also, looking at some of the values displayed here, it can be observed that there are several variations of same kind of ingredients. Which indiactes there is some level of cleaning need to be done to be able build a good model.
+
+Let us look at the number of recipes in each cusine to see how the data is spread:
+
+```{r warning=FALSE, message=FALSE}
+require(ggplot2)
+
+ggplot(data = cookTrain, aes(x = cuisine)) + 
+  geom_bar() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+The graph indicates that there a lot of recipes in Italian. So, lets mark all the recipes in test file as Italian as a benchmark. Also, add indicators to both test and training datasets, so that we can combine and split them as needed. 
+
+```{r warning=FALSE, message=FALSE}
+cookTrain$type <- "train"
+
+cookTest$type <- "test"
+
+cookTest$cuisine <- "italian"
+```
+
+Create a combined dataset called cookCombined, this would enable us to build the sparse matrix without the problem of having new variables from test dataset. These datasets would be spearated before building the model.
+
+```{r warning=FALSE, message=FALSE}
+cookCombined <- rbind(cookTrain, cookTest)
+```
+
+
+Data Wrangling and clean up:
+
+It is observed that some of the ingredients have measurements like 1 oz etc and some of the ingredients have punctuations like . and parentheses. 
+
+create a corpus of ingredients for further processing. Using TM package:
+
+```{r warning=FALSE, message=FALSE}
+require(tm)
+require(wordcloud)
+
+bagOfIng <- Corpus(VectorSource(cookCombined$ingredients))
+
+```
+
+
+Now remove the punctuations and stop words using the tm_map function.
+
+```{r warning=FALSE, message=FALSE}
+
+bagOfIng <- tm_map(bagOfIng, stemDocument)
+bagOfIng <- tm_map(bagOfIng, removePunctuation)
+bagOfIng <- tm_map(bagOfIng, content_transformer(tolower))
+bagOfIng <- tm_map(bagOfIng, removeNumbers)
+bagOfIng <- tm_map(bagOfIng, function(x) removeWords(x, c("the","frozen","fresh","oz")))
+
+```
+
+Stem the document terms and create a term matrix:
+
+```{r warning=FALSE, message=FALSE}
+
+bagOfIngDTM <- DocumentTermMatrix(bagOfIng)
+
+```
+
+We can plot some word clouds to see what are some of the common terms across cuisines and some of the least appearing terms. This way we can also find any anomolies.
+
+Least Common terms:
+
+```{r warning=FALSE, message=FALSE}
+matrix <- as.data.frame(as.matrix(bagOfIngDTM))
+
+aggregation <- sort(colSums(matrix),decreasing=TRUE)
+
+df <- data.frame(word = names(aggregation),freq=1/aggregation)
+
+pal <- brewer.pal(8, "Dark2")
+
+
+wordcloud(df$word,df$freq, scale=c(8,.3),min.freq=2,max.words=Inf, random.order=T, rot.per=.15, colors=pal, vfont=c("sans serif","plain"))
+```
+
+
+Most common terms:
+```{r warning=FALSE, message=FALSE}
+df <- data.frame(word = names(aggregation),freq = aggregation)
+
+pal <- brewer.pal(8, "Dark2")
+
+
+wordcloud(df$word,df$freq, scale=c(8,.3),min.freq=2,max.words=Inf, random.order=T, rot.per=.15, colors=pal, vfont=c("sans serif","plain"))
+```
+
+To Do:
+
+Based on the word clouds above, we can clean up some ingredients, like removing the company names like "Foster" etc. 
+
+Convert the matrix into a data frame and split the training and testing datasets.
+
+```{r warning=FALSE, message=FALSE}
+
+bagOfIngDTM <- as.data.frame(as.matrix(bagOfIngDTM))
+
+bagOfIngDTM$type <- as.factor(cookCombined$type)
+
+#inTrain <- createDataPartition(y = ingredientsDTM$cuisine, p = 0.6, list = FALSE)
+training <- bagOfIngDTM[bagOfIngDTM$type == "train",]
+testing <- bagOfIngDTM[bagOfIngDTM$type == "test",]
+
+training$cuisine <- as.factor(cookTrain$cuisine)
+testing$cuisine <- as.factor("italian")
+testing$id <- cookTest$id
+
+```
+Build the model using rpart package:
+
+```{r warning=FALSE, message=FALSE}
+require(rpart)
+
+model <- rpart(cuisine ~ ., data = training, method = "class")
+
+```
+
+Applying the model on Test data:
+
+```{r warning=FALSE, message=FALSE}
+pred <- predict(model, newdata = testing, type = "class")
+
+testing$cuisine <- pred
+
+```
+
+Write the predicted values into a CSV file for submission on kaggle:
+
+```{r warning=FALSE, message=FALSE}
+
+write.csv(testing[,c("id","cuisine")], "outputCooking.csv", quote=FALSE,
+          row.names = FALSE)
+
+```
+
+Results indicate a prediction accurcy at 0.40. 
+
+Few other things being pursued to improve the Model performance:
+
+Use Random Forest for model building
+Apply Gradient Boost
+Clean up the ingredients  to remove some unnecessary terms like company names etc.
