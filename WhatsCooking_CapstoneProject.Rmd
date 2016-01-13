@@ -1,0 +1,373 @@
+---
+title: 'Whats Cooking: Capstone Project'
+author: "Mallesh"
+date: "January 5, 2016"
+output: pdf_document
+---
+
+\fontsize{12}{22}
+
+##Introduction
+
+
+It is a well known fact that every cuisine has a distinct quality that distinguishes it from the others. For e.g., Indian foods are genrally known to be spicy, Middle eastern has a lot of ingredients etc. Yummly has provided a unique dataset with list of dishes, the ingredients used in preparing the dish and  cuisine it belongs to. This gives a good insight into how ingredients are spread across several cusines and dishes. In the process, a classification model is build which will predict the cuisine based on ingredients in a test file.
+
+Datasets can be found here:
+
+[What's Cooking](https://www.kaggle.com/c/whats-cooking/data)
+
+##Approach
+
+We shall go through the standard sequence of steps mentioned below to understand and build a successful model.
+
+* Import the Json datasets and read them into a data frame.
+* EDA to identify any patterns in the dataset.
+* Data Wrangling and cleanup.
+* Feature Engineering
+* Model Building
+
+##Data Import and EDA::
+
+```{r DataImport, warning=FALSE, message=FALSE , echo=FALSE}
+
+#Import required libraries
+require(jsonlite)
+
+
+#copy the test and train datasets into your working directory from the kaggle website, link provided in the Introduction section.
+cookTrain <- fromJSON("train.json", flatten = TRUE)
+cookTest <- fromJSON("test.json", flatten = TRUE)
+
+```
+
+
+```{r structure,warning=FALSE, message=FALSE, echo=FALSE, eval=FALSE}
+#This code chunk is disabled. However, please enable it if you need to look at the structure of the datasets.
+str(cookTrain)
+str(cookTest)
+```
+
+After standard import and flattening the JSON file, we know that there are three attributes in training file, id - indicates a dish ID (from kaggle), cusine - indicates a type of cuisine and ingredients - a list of ingredients.  In the testing file Cuisine attribute is excluded.
+
+Also, looking at some of the values, it can be observed that there are several variations of same kind of ingredients. Which indiactes there is some level of cleaning to happen to be able to build a good model.
+
+Let us look at the number of recipes in each cusine to see how the data is spread:
+
+```{r EDA1, warning=FALSE, message=FALSE, echo = FALSE}
+
+#Import ggplot function
+require(ggplot2)
+
+
+#Plot the number of recipes in each cuisine. 
+ggplot(data = cookTrain, aes(x = cuisine)) + 
+  geom_bar() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+
+```
+
+The graph indicates that there a lot of recipes in Italian. So, lets mark all the recipes in test file as Italian as a benchmark. Also, add indicators to both test and training datasets, so that we can combine and split them as needed. 
+
+```{r InitializeVariables, warning=FALSE, message=FALSE, echo = FALSE}
+
+#tag the training and testing datasets to have a type as train and test respectively. This will enable us to combine and split the data after creating a corpus.
+cookTrain$type <- "train"
+
+cookTest$type <- "test"
+
+#Considering that Italian has a large number of recipes let us initialize the test file to Italian.
+
+cookTest$cuisine <- "italian"
+```
+
+Create a combined dataset , this would enable us to build the sparse matrix without the problem of having new variables from test dataset. These datasets would be spearated before building the model.
+
+```{r CombineTrainNTest, warning=FALSE, message=FALSE , echo = FALSE}
+
+#Join Test and Training datasets, so that we create a super set of columns in our dataframe.
+cookCombined <- rbind(cookTrain, cookTest)
+```
+
+
+##Data Wrangling and clean up:
+
+It is observed that some of the ingredients have measurements like 1 oz etc and some of the ingredients have punctuations like "."" and parentheses. 
+
+create a corpus of ingredients for further processing. Using TM package:
+
+For doing further analysis, a bag of words is created which makes it simpler to clean-up the words. Following cleaning steps are applied in that order:
+-Stem the words
+-Remove the Punctuation
+-Remove the Numbers
+-Convert to lower case
+
+
+```{r corpus, warning=FALSE, message=FALSE, echo=FALSE}
+#Import required packages.
+require(tm)
+require(wordcloud)
+
+#Create a corpus of ingredients for further cleaning.
+
+bagOfIng <- Corpus(VectorSource(cookCombined$ingredients))
+
+```
+
+
+```{r DataCleansing ,warning=FALSE, message=FALSE, echo=FALSE}
+
+#carry out the basic cleansing functions on ingredients.
+
+bagOfIng <- tm_map(bagOfIng, removePunctuation)
+bagOfIng <- tm_map(bagOfIng, content_transformer(tolower))
+bagOfIng <- tm_map(bagOfIng, removeNumbers)
+
+
+#Convert bag of ingredients to a Document Term Matrix.
+bagOfIngDTM <- DocumentTermMatrix(bagOfIng)
+
+
+
+```
+
+Plot a word cloud with the least occuring ingredient names and most occuring ingredient names to ensure any bad data is cleaned. 
+
+###Least Common Terms:
+
+```{r leastCommonTerms, warning=FALSE, message=FALSE, echo=FALSE}
+
+#Convert the Document Term Matrix into a dataframe.
+matrix <- as.data.frame(as.matrix(bagOfIngDTM))
+
+
+#Create an aggregation for each column to find the number of times an ingredient appeared across recipes.
+aggregation <- sort(colSums(matrix),decreasing=TRUE)
+
+
+#create a dataframe with inverted frequency to find the least common terms.
+df <- data.frame(word = names(aggregation),freq=1/aggregation)
+
+pal <- brewer.pal(8, "Dark2")
+
+#Create a word cloud to see least appearing terms. 
+wordcloud(df$word,df$freq, scale=c(8,.3),min.freq=2,max.words=Inf, random.order=T, rot.per=.15, colors=pal, vfont=c("sans serif","plain"))
+```
+
+###Most common terms:
+
+```{r mostCommonTerms, warning=FALSE, message=FALSE, echo=FALSE}
+#Create a data frame with frequency.
+df <- data.frame(word = names(aggregation),freq = aggregation)
+
+pal <- brewer.pal(8, "Dark2")
+
+#Create a wordClud using the most common terms.
+wordcloud(df$word,df$freq, scale=c(8,.3),min.freq=2,max.words=Inf, random.order=T, rot.per=.15, colors=pal, vfont=c("sans serif","plain"))
+```
+
+Based on the above word cloud, we can remove some of the terms that look like company names and measurements etc. List of words observed are:
+
+"the","frozen","fresh","oz","reposado","medallion","foster","smithfield","simpli","home","zinfandel","reducedsodium","sand","four","links","broil","tri","nib","rome","guinea","vineyard","farm", "dasti", "torn", "indian", "lake", "dash","razor", "telem","delallo", "torn", "earl","for", "zero","into"
+
+```{r DataCleansing2 , warning=FALSE, message=FALSE, echo=FALSE}
+#Dervie Stop words based on the least and most common terms from graphs above, repeat the process above to reach a good list of stop words.
+
+stwords <- c("the","frozen","fresh","oz", "reposado","medallion",
+             "foster","smithfield","simpli","home","zinfandel","reducedsodium",
+             "sand","four","links","broil","tri","nib","rome","guinea",
+             "vineyard","farm", "dasti", "torn", "indian", "lake", "dash",
+             "razor", "telem","delallo", "torn", "earl","for", "zero","into"
+             )
+
+#Remove the stop words
+bagOfIng <- tm_map(bagOfIng, function(x) removeWords(x, stwords))
+
+#Stem the document.
+bagOfIng <- tm_map(bagOfIng, stemDocument)
+
+#convert the dataframe into Document Term Matrix.
+bagOfIngDTM <- DocumentTermMatrix(bagOfIng)
+
+```
+
+
+As a next step, remove the sparse terms, i.e., include only those terms that have appeared atleast few 100 times in the corpus. We have come to this conclusion, since there are atleast 400 recipies for each cuisine and if an ingredient doesn't appear atleast 25% of the time, then it wouldn't be a good indicator of the cuisine. This would also remove any anomolies we might find that were missed during the manual step explained above.
+
+```{r SparseNSplit , warning=FALSE, message=FALSE, echo=FALSE}
+#remove the sparse terms.
+bagOfIngDTM <- removeSparseTerms(bagOfIngDTM,0.99)
+
+#Convert the Matrix to a dataframe.
+bagOfIngDTM <- as.data.frame(as.matrix(bagOfIngDTM))
+
+#Assign the type variable to new matrix.
+bagOfIngDTM$type <- as.factor(cookCombined$type)
+
+#Split the training and testing datasets.
+training <- bagOfIngDTM[bagOfIngDTM$type == "train",]
+testing <- bagOfIngDTM[bagOfIngDTM$type == "test",]
+
+#Assign the target variable to the Matrix.
+training$cuisine <- as.factor(cookTrain$cuisine)
+
+#Assign default value to cuisine in testing dataset.
+testing$cuisine <- as.factor("italian")
+testing$id <- cookTest$id
+
+```
+
+##Feature Engineering:
+
+While some dishes are simple to prepare and some are difficult to prepare, the number of ingredients play a role in the complexity of the dish. Plotting the average number of ingredients across the cuisines:
+
+```{r NoOfIngredients, message=FALSE, warning=FALSE, echo=FALSE}
+#load required packages.
+require(dplyr)
+
+#Calculate the count of ingredients in each recipe.
+cookTrainCount <- cookTrain %>% mutate(noOfIng = lapply(ingredients, length)) %>%
+  select(cuisine, noOfIng)
+
+#Graph the mean of ingredient count across all cuisines.
+cookTrainCount %>% group_by(cuisine) %>%
+  summarize(IngMean = mean(as.numeric(noOfIng))) %>%
+  ggplot(aes(x=cuisine, y=IngMean)) + geom_point() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  geom_hline(aes(yintercept = mean(IngMean)))
+
+#Repeat the calculation for cookTestCount.
+cookTestCount <- cookTest %>% mutate(noOfIng = lapply(ingredients, length)) %>%
+  select(cuisine, noOfIng)
+
+
+```
+
+The graph above indicates that the number of ingredients might play a role in the model evaluation. So, lets add an additional column to the training and testing datasets to include the number of ingredients in each of the dish.
+
+```{r addNumberOfIngredients, message=FALSE, warning=FALSE, echo=FALSE}
+#Add number of ingredients variable to both training and testing datasets.
+training$noOfIng <- as.numeric(cookTrainCount$noOfIng)
+
+testing$noOfIng <- as.numeric(cookTestCount$noOfIng)
+
+```
+
+
+##Model Building:
+
+4 different models were built using different algorithms:
+
+In the order of their performance:
+
+Decision trees: Using the rpart package in R, a multi classifier model is built to predict the cuisine based on the final set of ingredients. The result set submitted achieved a score of 0.40185.
+
+```{r DecisionTree, warning=FALSE, message=FALSE, echo=FALSE, eval = FALSE}
+#Import rpart package
+require(rpart)
+
+#Build a model with default parameters. 
+modelDT <- rpart(cuisine ~ ., data = training, method = "class")
+
+#predict the results for testing dataset.
+predictDT <- predict(modelDT, newdata = testing, type = "class")
+
+#Assign predicted values to testing dataset.
+testing$cuisine <- predictDT
+
+#Write out the CSV for submission.
+write.csv(testing[,c("id","cuisine")], "outputCooking_rpart.csv", quote=FALSE,
+          row.names = FALSE)
+
+
+```
+
+Random Forest: After not so great score on Decision Trees, lets check if a Random Forest model performs any better. When the results are predicted based on a Random Forest model the prediction accuracy is around 0.47
+
+```{r RandomForest, warning=FALSE, message=FALSE, echo=FALSE, eval=FALSE}
+#Import Random Forest.
+require(randomForest)
+
+#Assign testing cuisine to NULL.
+testing$cuisine <- NULL
+
+#Build a randomForest model.
+modelRF <- randomForest(cuisine ~ ., data = training, maxnodes=50)
+
+#Predict the values for testing set.
+predictRF <- predict(modelRF, newdata = testing, type = "class")
+
+#Assign predicted values to testing dataset.
+testing$cuisine <- predictRF
+
+#Write the output to a csv file
+write.csv(testing[,c("id","cuisine")], "outputCooking_rf.csv", quote=FALSE,
+          row.names = FALSE)
+
+```
+
+SVM: Now, lets apply support vector machine SVM algorith to see of the success ratio improves. After building the model and checking for the ratio, its at 0.73592. Quite an improvement over the RandomForests.
+
+```{r SVM, warning=FALSE, message=FALSE, echo=FALSE, eval = FALSE}
+#Assign testing cuisine to NULL.
+testing$cuisine <- NULL
+
+#Import e1071 packages. We shall use svm package from it.
+require(e1071)
+
+#Build a SVM model. This process might take time to finish.
+modelSVM <- svm(cuisine ~ ., data = training)
+
+#predict the values
+predictSVM <- predict(modelSVM, newdata = testing, type = "class")
+
+#Assign cuisines to testing set.
+testing$cuisine <- predictSVM
+
+#Write the output to a CSV file for submission.
+write.csv(testing[,c("id","cuisine")], "outputCooking_svm.csv", quote=FALSE,
+          row.names = FALSE)
+
+
+
+```
+
+XGBOOST: Finally, lets check if the performance improves with the Gradient Boosting. We need to build a datamatrix and convert the classifiers into Numericals as Gradient boosting doesn't support character classifiers. After rearranging the data and building an xgboost model, the success ratio is at 0.76368
+
+
+
+```{r xgboost, warning=FALSE, message=FALSE, echo=FALSE, eval=FALSE}
+testing$cuisine <- NULL
+
+#Import xgboost
+require(xgboost)
+
+#Convert the label to numbers.
+cuisinelabel <- as.numeric(training$cuisine)-1
+
+#remove the cuisine dataset from training to create a matrix of independent variables.
+cuisineData <- data.matrix(training[, !colnames(training) %in% 
+                                      c("cuisine")])
+
+#create a matrix and build a model.
+xgMatrix    <- xgb.DMatrix(data = cuisineData , label= cuisinelabel)
+
+
+#change aplpha  parameter to 1 or 2, based on whether L1 or L2 regularization is needed.
+
+modelXGB   <- xgboost(xgMatrix, max.depth = 10, eta = 0.3, nround = 50,objective = "multi:softmax", num_class = 20, alpha =1)
+
+#predict the values and convert the labels to strings.
+cuisineTest <- data.matrix(testing[, !colnames(testing) %in% c("cuisine")])
+predictXGB     <- predict(modelXGB, newdata = cuisineTest )
+cuisineTest <- levels(training$cuisine)[predictXGB+1]
+
+testing$cuisine <- cuisineTest
+
+#write the data to a csv file.
+write.csv(testing[,c("id","cuisine")], "outputCooking_xgb.csv", quote=FALSE,
+          row.names = FALSE)
+
+```
+
